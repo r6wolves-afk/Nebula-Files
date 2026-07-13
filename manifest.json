@@ -1,7 +1,7 @@
 {
   "id": "files",
   "name": "Nebula Files",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "type": "ui",
   "summary": "A per-user file explorer for Nebula.",
   "description": "Browse, preview, share, upload, rename, move, delete, and download files with Explorer-style selection and drag-and-drop workflows.",

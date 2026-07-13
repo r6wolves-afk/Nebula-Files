@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.1 - 2026-07-13
+
+- Added Share to the selected-item action bar so folders can be shared from the same Explorer-style workflow as files.
+
 ## 2.5.0 - 2026-07-13
 
 - Added My Files, Shared with me, and Shared by me views.
