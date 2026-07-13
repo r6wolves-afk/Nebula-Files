@@ -19,10 +19,10 @@
 
         <div class="toolbar-actions">
           <div class="view-toggle" role="group" aria-label="View mode">
-            <button class="icon-button active" id="gridViewButton" type="button" aria-label="Grid view" title="Grid view">
+            <button class="icon-button" id="gridViewButton" type="button" aria-label="Grid view" title="Grid view">
               <span class="icon grid-icon" aria-hidden="true"></span>
             </button>
-            <button class="icon-button" id="listViewButton" type="button" aria-label="List view" title="List view">
+            <button class="icon-button active" id="listViewButton" type="button" aria-label="List view" title="List view">
               <span class="icon list-icon" aria-hidden="true"></span>
             </button>
           </div>
@@ -35,6 +35,12 @@
       <section class="pathbar" aria-label="Folder navigation">
         <button class="icon-button" id="backButton" type="button" aria-label="Back" title="Back" disabled>&larr;</button>
         <nav class="breadcrumbs" id="breadcrumbs" aria-label="Folder breadcrumbs"></nav>
+      </section>
+
+      <section class="view-tabs" aria-label="File views">
+        <button class="view-tab active" id="myFilesViewButton" type="button">My Files</button>
+        <button class="view-tab" id="sharedWithMeViewButton" type="button">Shared with me</button>
+        <button class="view-tab" id="sharedByMeViewButton" type="button">Shared by me</button>
       </section>
 
       <section class="explorer-controls" aria-label="Explorer tools">
@@ -101,7 +107,7 @@
           <button class="secondary-button" id="retryButton" type="button">Retry</button>
         </div>
 
-        <div class="entries grid-view" id="entries" aria-live="polite"></div>
+        <div class="entries list-view" id="entries" aria-live="polite"></div>
       </section>
     </main>
 
@@ -166,6 +172,41 @@
         <footer>
           <button class="secondary-button" value="cancel" type="submit">Cancel</button>
           <button class="danger-button" id="deleteSubmit" value="default" type="submit">Delete</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="shareDialog">
+      <form method="dialog" class="modal-card" id="shareForm">
+        <header>
+          <div>
+            <h2>Share</h2>
+            <p id="shareTargetName"></p>
+          </div>
+          <button class="ghost-button" value="cancel" aria-label="Close" type="submit">&times;</button>
+        </header>
+        <fieldset class="share-options">
+          <legend>Scope</legend>
+          <label class="choice-row">
+            <input id="shareScopeUser" name="shareScope" type="radio" value="user" checked />
+            <span>User</span>
+          </label>
+          <label class="choice-row">
+            <input id="shareScopeServer" name="shareScope" type="radio" value="server" />
+            <span>Everyone on this server</span>
+          </label>
+        </fieldset>
+        <label id="shareUserField">
+          <span>User</span>
+          <select id="shareUserSelect" name="shareUser"></select>
+        </label>
+        <label>
+          <span>Permission</span>
+          <input id="sharePermissionInput" type="text" value="Viewer" readonly />
+        </label>
+        <footer>
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="shareSubmit" value="default" type="submit">Share</button>
         </footer>
       </form>
     </dialog>

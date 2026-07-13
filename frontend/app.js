@@ -1,7 +1,13 @@
 const API_BASE = "/api/addons/files";
 const ROOT_ID = null;
+const VIEWS = {
+  MY_FILES: "my-files",
+  SHARED_WITH_ME: "shared-with-me",
+  SHARED_BY_ME: "shared-by-me"
+};
 
 const state = {
+  activeView: VIEWS.MY_FILES,
   currentFolderId: ROOT_ID,
   entries: [],
   allEntries: [],
@@ -10,13 +16,14 @@ const state = {
   breadcrumbs: [{ id: ROOT_ID, name: "Files" }],
   navigationHistory: [{ id: ROOT_ID, breadcrumbs: [{ id: ROOT_ID, name: "Files" }] }],
   navigationIndex: 0,
-  viewMode: localStorage.getItem("nebula-files-view") || "grid",
+  viewMode: localStorage.getItem("nebula-files-view") || "list",
   sortBy: localStorage.getItem("nebula-files-sort") || "name-asc",
   searchQuery: "",
   selectedIds: new Set(),
   lastSelectedId: null,
   activeEntry: null,
   pendingDeleteEntries: [],
+  directoryUsers: [],
   previewObjectUrl: null,
   draggedEntryIds: [],
   dragDepth: 0
@@ -59,6 +66,7 @@ const elements = {
   moveForm: document.querySelector("#moveForm"),
   moveSubmit: document.querySelector("#moveSubmit"),
   moveSelectedButton: document.querySelector("#moveSelectedButton"),
+  myFilesViewButton: document.querySelector("#myFilesViewButton"),
   newFolderButton: document.querySelector("#newFolderButton"),
   notice: document.querySelector("#notice"),
   openSelectedButton: document.querySelector("#openSelectedButton"),
@@ -78,11 +86,26 @@ const elements = {
   searchInput: document.querySelector("#searchInput"),
   selectionBar: document.querySelector("#selectionBar"),
   selectionSummary: document.querySelector("#selectionSummary"),
+  shareDialog: document.querySelector("#shareDialog"),
+  shareForm: document.querySelector("#shareForm"),
+  sharePermissionInput: document.querySelector("#sharePermissionInput"),
+  shareScopeServer: document.querySelector("#shareScopeServer"),
+  shareScopeUser: document.querySelector("#shareScopeUser"),
+  shareSubmit: document.querySelector("#shareSubmit"),
+  shareTargetName: document.querySelector("#shareTargetName"),
+  shareUserField: document.querySelector("#shareUserField"),
+  shareUserSelect: document.querySelector("#shareUserSelect"),
+  sharedByMeViewButton: document.querySelector("#sharedByMeViewButton"),
+  sharedWithMeViewButton: document.querySelector("#sharedWithMeViewButton"),
   sortSelect: document.querySelector("#sortSelect")
 };
 
 function getEntryId(entry) {
-  return entry.id || entry._id;
+  return entry.rowId || entry.id || entry._id;
+}
+
+function getContentEntryId(entry) {
+  return entry.sharedContext?.entryId || entry.id || entry._id;
 }
 
 function getEntryName(entry) {
@@ -91,6 +114,107 @@ function getEntryName(entry) {
 
 function normalizeParentId(parentId) {
   return parentId || ROOT_ID;
+}
+
+function isMyFilesView() {
+  return state.activeView === VIEWS.MY_FILES;
+}
+
+function isSharedWithMeView() {
+  return state.activeView === VIEWS.SHARED_WITH_ME;
+}
+
+function isSharedByMeView() {
+  return state.activeView === VIEWS.SHARED_BY_ME;
+}
+
+function entryCanMutate(entry) {
+  return isMyFilesView() && !entry.sharedContext;
+}
+
+function entryCanDownload(entry) {
+  return entry?.type === "file";
+}
+
+function getShareId(share) {
+  return share?.share?.id || share?.shareId || share?.id || share?._id;
+}
+
+function getShareRecord(share) {
+  return share?.share || share;
+}
+
+function getSharedEntry(share) {
+  return share?.entry || share?.file || share?.folder || share?.item || share?.resource || share?.target || share;
+}
+
+function getOwnerLabel(value) {
+  const owner = value?.owner || value?.createdBy || value?.sharedBy || value?.user;
+  const share = getShareRecord(value);
+  return owner?.displayName || owner?.username || value?.ownerName || value?.sharedByName || share?.ownerUserId || "Owner";
+}
+
+function getTargetLabel(share) {
+  const shareRecord = getShareRecord(share);
+  if (shareRecord?.scope === "server") return "Everyone on this server";
+  const target = share?.targetUser || share?.target || share?.user;
+  return target?.displayName || target?.username || share?.targetUsername || shareRecord?.targetUserId || "User";
+}
+
+function cloneSharedEntry(entry, sharedContext) {
+  return {
+    ...entry,
+    id: getEntryId(entry),
+    name: getEntryName(entry),
+    filename: entry.filename || getEntryName(entry),
+    sharedContext
+  };
+}
+
+function normalizeSharedWithMeShare(share) {
+  const entry = getSharedEntry(share);
+  const shareRecord = getShareRecord(share);
+  const shareId = getShareId(share);
+  return cloneSharedEntry(entry, {
+    type: "with-me",
+    shareId,
+    ownerLabel: getOwnerLabel(share),
+    scope: shareRecord?.scope || "user",
+    permission: shareRecord?.permission || "viewer",
+    rootEntryId: getEntryId(entry)
+  });
+}
+
+function normalizeSharedFolderEntry(entry, shareId, ownerLabel) {
+  return cloneSharedEntry(entry, {
+    type: "with-me",
+    shareId,
+    ownerLabel,
+    scope: "user",
+    permission: "viewer"
+  });
+}
+
+function normalizeSharedByMeShare(share) {
+  const entry = getSharedEntry(share);
+  const shareRecord = getShareRecord(share);
+  const shareId = getShareId(share);
+  return {
+    ...cloneSharedEntry(entry, {
+    type: "by-me",
+    shareId,
+    scope: shareRecord?.scope || "user",
+    permission: shareRecord?.permission || "viewer",
+    targetLabel: getTargetLabel(share),
+    entryId: getEntryId(entry)
+    }),
+    rowId: `share-${shareId}`
+  };
+}
+
+function arrayFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  return data?.shares || data?.entries || data?.items || data?.files || data?.users || [];
 }
 
 function normalizeBreadcrumbs(data) {
@@ -137,6 +261,14 @@ function formatDate(value) {
 }
 
 function describeEntry(entry) {
+  if (entry.sharedContext?.type === "with-me") {
+    const base = entry.type === "folder" ? "Folder" : typeLabelFor(entry);
+    return `${base} - Shared by ${entry.sharedContext.ownerLabel || "Owner"}`;
+  }
+  if (entry.sharedContext?.type === "by-me") {
+    const base = entry.type === "folder" ? "Folder" : typeLabelFor(entry);
+    return `${base} - Shared with ${entry.sharedContext.targetLabel || "User"}`;
+  }
   if (entry.type === "folder") return `Folder - Updated ${formatDate(entry.updatedAt || entry.createdAt)}`;
   return `${typeLabelFor(entry)} - ${formatSize(entry.size)}`;
 }
@@ -251,7 +383,8 @@ function setBusy(button, isBusy, label) {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const url = path.startsWith("/api/") ? path : `${API_BASE}${path}`;
+  const response = await fetch(url, {
     credentials: "same-origin",
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
     ...options
@@ -274,6 +407,7 @@ async function request(path, options = {}) {
 }
 
 async function loadEntries(parentId = state.currentFolderId) {
+  state.activeView = VIEWS.MY_FILES;
   elements.loadingState.classList.remove("hidden");
   elements.emptyState.classList.add("hidden");
   elements.errorState.classList.add("hidden");
@@ -301,7 +435,107 @@ async function loadEntries(parentId = state.currentFolderId) {
   }
 }
 
+async function loadSharedWithMe() {
+  state.activeView = VIEWS.SHARED_WITH_ME;
+  elements.loadingState.classList.remove("hidden");
+  elements.emptyState.classList.add("hidden");
+  elements.errorState.classList.add("hidden");
+  elements.entries.classList.add("hidden");
+
+  try {
+    const data = await request("/shared-with-me");
+    state.currentFolderId = ROOT_ID;
+    state.currentFolder = null;
+    state.entries = arrayFromResponse(data).map(normalizeSharedWithMeShare).filter((entry) => getEntryId(entry));
+    state.hasAllEntries = false;
+    state.allEntries = [];
+    state.breadcrumbs = [{ id: ROOT_ID, name: "Shared with me", view: VIEWS.SHARED_WITH_ME }];
+    state.selectedIds.clear();
+    state.lastSelectedId = null;
+    render();
+    return true;
+  } catch (error) {
+    elements.errorMessage.textContent = error.message;
+    elements.errorState.classList.remove("hidden");
+    return false;
+  } finally {
+    elements.loadingState.classList.add("hidden");
+  }
+}
+
+async function loadSharedFolder(shareId, parentId = ROOT_ID, label = "Shared folder", breadcrumbs = null) {
+  state.activeView = VIEWS.SHARED_WITH_ME;
+  elements.loadingState.classList.remove("hidden");
+  elements.emptyState.classList.add("hidden");
+  elements.errorState.classList.add("hidden");
+  elements.entries.classList.add("hidden");
+
+  try {
+    const query = parentId ? `?parentId=${encodeURIComponent(parentId)}` : "";
+    const data = await request(`/shared-with-me/${encodeURIComponent(shareId)}/files${query}`);
+    const ownerLabel = data?.ownerLabel || data?.owner?.displayName || data?.owner?.username || "Owner";
+    state.currentFolderId = normalizeParentId(parentId);
+    state.currentFolder = data.currentFolder || null;
+    state.entries = arrayFromResponse(data).map((entry) => normalizeSharedFolderEntry(entry, shareId, ownerLabel));
+    state.hasAllEntries = false;
+    state.allEntries = [];
+    state.breadcrumbs = breadcrumbs || [
+      { id: ROOT_ID, name: "Shared with me", view: VIEWS.SHARED_WITH_ME },
+      { id: parentId || shareId, name: label, view: VIEWS.SHARED_WITH_ME, shareId, parentId: parentId || ROOT_ID }
+    ];
+    state.selectedIds.clear();
+    state.lastSelectedId = null;
+    render();
+    return true;
+  } catch (error) {
+    elements.errorMessage.textContent = error.message;
+    elements.errorState.classList.remove("hidden");
+    return false;
+  } finally {
+    elements.loadingState.classList.add("hidden");
+  }
+}
+
+async function loadSharedByMe() {
+  state.activeView = VIEWS.SHARED_BY_ME;
+  elements.loadingState.classList.remove("hidden");
+  elements.emptyState.classList.add("hidden");
+  elements.errorState.classList.add("hidden");
+  elements.entries.classList.add("hidden");
+
+  try {
+    const data = await request("/shared-by-me");
+    state.currentFolderId = ROOT_ID;
+    state.currentFolder = null;
+    state.entries = arrayFromResponse(data).map(normalizeSharedByMeShare).filter((entry) => entry.sharedContext.shareId && entry.sharedContext.entryId);
+    state.hasAllEntries = false;
+    state.allEntries = [];
+    state.breadcrumbs = [{ id: ROOT_ID, name: "Shared by me", view: VIEWS.SHARED_BY_ME }];
+    state.selectedIds.clear();
+    state.lastSelectedId = null;
+    render();
+    return true;
+  } catch (error) {
+    elements.errorMessage.textContent = error.message;
+    elements.errorState.classList.remove("hidden");
+    return false;
+  } finally {
+    elements.loadingState.classList.add("hidden");
+  }
+}
+
+async function reloadCurrentView() {
+  if (isSharedWithMeView()) {
+    const crumb = state.breadcrumbs.at(-1);
+    if (crumb?.shareId) return loadSharedFolder(crumb.shareId, crumb.parentId || ROOT_ID, crumb.name, state.breadcrumbs);
+    return loadSharedWithMe();
+  }
+  if (isSharedByMeView()) return loadSharedByMe();
+  return loadEntries();
+}
+
 function render() {
+  renderViewTabs();
   renderBreadcrumbs();
   renderEntries();
   renderViewMode();
@@ -313,8 +547,20 @@ function render() {
   const fileCount = state.entries.length - folderCount;
   const visibleCount = getVisibleEntries().length;
   const filtered = state.searchQuery ? `, ${visibleCount} shown` : "";
-  elements.folderSummary.textContent = `${folderName} - ${folderCount} folder${folderCount === 1 ? "" : "s"}, ${fileCount} file${fileCount === 1 ? "" : "s"}${filtered}`;
+  const itemLabel = isSharedByMeView() ? "share" : "file";
+  elements.folderSummary.textContent = `${folderName} - ${folderCount} folder${folderCount === 1 ? "" : "s"}, ${fileCount} ${itemLabel}${fileCount === 1 ? "" : "s"}${filtered}`;
   elements.dropTargetLabel.textContent = folderName;
+  elements.newFolderButton.disabled = !isMyFilesView();
+  elements.emptyNewFolderButton.disabled = !isMyFilesView();
+  elements.fileUploadInput.disabled = !isMyFilesView();
+  elements.emptyFileUploadInput.disabled = !isMyFilesView();
+  document.querySelectorAll('label[for="fileUploadInput"], label[for="emptyFileUploadInput"]').forEach((label) => label.classList.toggle("disabled", !isMyFilesView()));
+}
+
+function renderViewTabs() {
+  elements.myFilesViewButton.classList.toggle("active", isMyFilesView());
+  elements.sharedWithMeViewButton.classList.toggle("active", isSharedWithMeView());
+  elements.sharedByMeViewButton.classList.toggle("active", isSharedByMeView());
 }
 
 function renderBreadcrumbs() {
@@ -334,15 +580,17 @@ function renderBreadcrumbs() {
     button.textContent = crumb.name;
     if (index === state.breadcrumbs.length - 1) button.classList.add("breadcrumb-current");
     button.addEventListener("click", () => navigateToBreadcrumb(index));
-    button.addEventListener("dragover", (event) => handleFolderDragOver(event, crumb.id, button));
-    button.addEventListener("dragleave", () => button.classList.remove("is-drop-target"));
-    button.addEventListener("drop", (event) => handleFolderDrop(event, crumb.id, button));
+    if (isMyFilesView()) {
+      button.addEventListener("dragover", (event) => handleFolderDragOver(event, crumb.id, button));
+      button.addEventListener("dragleave", () => button.classList.remove("is-drop-target"));
+      button.addEventListener("drop", (event) => handleFolderDrop(event, crumb.id, button));
+    }
     elements.breadcrumbs.append(button);
   });
 }
 
 function renderNavigationControls() {
-  elements.backButton.disabled = state.navigationIndex === 0;
+  elements.backButton.disabled = isMyFilesView() ? state.navigationIndex === 0 : state.breadcrumbs.length <= 1;
 }
 
 function rememberLocation() {
@@ -364,6 +612,12 @@ function rememberLocation() {
 }
 
 async function goBack() {
+  if (!isMyFilesView()) {
+    if (state.breadcrumbs.length <= 1) return;
+    navigateToBreadcrumb(state.breadcrumbs.length - 2);
+    return;
+  }
+
   if (state.navigationIndex === 0) return;
 
   const previousIndex = state.navigationIndex;
@@ -385,8 +639,16 @@ function renderEntries() {
   elements.entries.replaceChildren();
 
   if (state.entries.length === 0) {
-    elements.emptyTitle.textContent = "This folder is empty";
-    elements.emptyMessage.textContent = "Create a folder or upload files to get started.";
+    if (isSharedWithMeView()) {
+      elements.emptyTitle.textContent = state.breadcrumbs.length > 1 ? "This shared folder is empty" : "Nothing shared with you";
+      elements.emptyMessage.textContent = state.breadcrumbs.length > 1 ? "Shared folders are viewer-only." : "Files and folders shared with you will appear here.";
+    } else if (isSharedByMeView()) {
+      elements.emptyTitle.textContent = "No active shares";
+      elements.emptyMessage.textContent = "Shares you create from My Files will appear here.";
+    } else {
+      elements.emptyTitle.textContent = "This folder is empty";
+      elements.emptyMessage.textContent = "Create a folder or upload files to get started.";
+    }
     elements.emptyState.classList.remove("hidden");
     elements.entries.classList.add("hidden");
     return;
@@ -441,7 +703,7 @@ function createEntryCard(entry) {
   card.dataset.entryId = entryId;
   card.classList.toggle("selected", state.selectedIds.has(entryId));
   card.tabIndex = 0;
-  card.draggable = true;
+  card.draggable = entryCanMutate(entry);
 
   const selectLabel = document.createElement("label");
   selectLabel.className = "entry-select";
@@ -473,19 +735,32 @@ function createEntryCard(entry) {
   details.className = "entry-details";
   details.append(detailChip(entry.type === "folder" ? "Folder" : typeLabelFor(entry)));
   if (entry.type === "file") details.append(detailChip(formatSize(entry.size)));
-  details.append(detailChip(`Modified ${formatDate(entry.updatedAt || entry.createdAt)}`));
+  if (entry.sharedContext?.type === "with-me") {
+    details.append(detailChip(entry.sharedContext.scope === "server" ? "Server share" : "User share"));
+    details.append(detailChip("Viewer"));
+  } else if (entry.sharedContext?.type === "by-me") {
+    details.append(detailChip(entry.sharedContext.scope === "server" ? "Everyone" : entry.sharedContext.targetLabel));
+    details.append(detailChip("Viewer"));
+  } else {
+    details.append(detailChip(`Modified ${formatDate(entry.updatedAt || entry.createdAt)}`));
+  }
 
   main.append(title, subtitle, details);
 
   const actions = document.createElement("div");
   actions.className = "entry-actions";
   actions.append(actionButton("Open", () => openEntry(entry)));
-  if (entry.type === "file") actions.append(actionButton("Download", () => downloadFile(entry)));
-  actions.append(
-    actionButton("Rename", () => showRenameDialog(entry)),
-    actionButton("Move", () => showMoveDialog(entry)),
-    actionButton("Delete", () => showDeleteDialog(entry), "danger")
-  );
+  if (entryCanDownload(entry)) actions.append(actionButton("Download", () => downloadFile(entry)));
+  if (entryCanMutate(entry)) {
+    actions.append(
+      actionButton("Share", () => showShareDialog(entry)),
+      actionButton("Rename", () => showRenameDialog(entry)),
+      actionButton("Move", () => showMoveDialog(entry)),
+      actionButton("Delete", () => showDeleteDialog(entry), "danger")
+    );
+  } else if (entry.sharedContext?.type === "by-me") {
+    actions.append(actionButton("Revoke", () => revokeShare(entry), "danger"));
+  }
 
   card.addEventListener("click", (event) => {
     if (event.target.closest("button") || event.target.closest("input") || event.target.closest("label")) return;
@@ -503,6 +778,10 @@ function createEntryCard(entry) {
     }
   });
   card.addEventListener("dragstart", (event) => {
+    if (!entryCanMutate(entry)) {
+      event.preventDefault();
+      return;
+    }
     if (event.target.closest("button") || event.target.closest("input") || event.target.closest("label")) {
       event.preventDefault();
       return;
@@ -526,7 +805,7 @@ function createEntryCard(entry) {
   });
   card.addEventListener("dragend", clearEntryDragState);
 
-  if (entry.type === "folder") {
+  if (entry.type === "folder" && isMyFilesView()) {
     card.addEventListener("dragover", (event) => handleFolderDragOver(event, entryId, card));
     card.addEventListener("dragleave", () => card.classList.remove("is-drop-target"));
     card.addEventListener("drop", (event) => handleFolderDrop(event, entryId, card));
@@ -641,8 +920,9 @@ function renderSelectionBar() {
   const fileCount = selectedCount - folderCount;
   elements.selectionSummary.textContent = `${selectedCount} selected - ${folderCount} folder${folderCount === 1 ? "" : "s"}, ${fileCount} file${fileCount === 1 ? "" : "s"}`;
   elements.openSelectedButton.disabled = selectedCount !== 1;
-  elements.renameSelectedButton.disabled = selectedCount !== 1;
-  elements.moveSelectedButton.disabled = selectedCount !== 1;
+  elements.renameSelectedButton.disabled = selectedCount !== 1 || !isMyFilesView();
+  elements.moveSelectedButton.disabled = selectedCount !== 1 || !isMyFilesView();
+  elements.deleteSelectedButton.disabled = selectedCount === 0 || !isMyFilesView();
 }
 
 function withSingleSelected(action) {
@@ -653,6 +933,23 @@ function withSingleSelected(action) {
 
 async function openEntry(entry) {
   if (entry.type === "folder") {
+    if (entry.sharedContext?.type === "with-me") {
+      const shareId = entry.sharedContext.shareId;
+      const isShareRoot = state.breadcrumbs.length === 1 && entry.sharedContext.rootEntryId === getEntryId(entry);
+      const requestParentId = isShareRoot ? getContentEntryId(entry) : getEntryId(entry);
+      const breadcrumbs = [
+        ...state.breadcrumbs,
+        { id: getEntryId(entry), name: getEntryName(entry), view: VIEWS.SHARED_WITH_ME, shareId, parentId: requestParentId }
+      ];
+      await loadSharedFolder(shareId, requestParentId, getEntryName(entry), breadcrumbs);
+      return;
+    }
+
+    if (entry.sharedContext?.type === "by-me") {
+      await loadEntries(entry.sharedContext.entryId || getEntryId(entry));
+      return;
+    }
+
     const previousBreadcrumbs = [...state.breadcrumbs];
     state.breadcrumbs.push({ id: getEntryId(entry), name: getEntryName(entry) });
     const loaded = await loadEntries(getEntryId(entry));
@@ -692,7 +989,7 @@ async function previewFile(entry) {
   elements.previewDialog.showModal();
 
   try {
-    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getEntryId(entry))}`, { credentials: "same-origin" });
+    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getContentEntryId(entry))}`, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`Could not preview ${getEntryName(entry)}`);
     await renderFilePreview(entry, await response.blob());
   } catch (error) {
@@ -755,7 +1052,7 @@ async function renderFilePreview(entry, blob) {
 
 async function openFile(entry) {
   try {
-    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getEntryId(entry))}`, { credentials: "same-origin" });
+    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getContentEntryId(entry))}`, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`Could not open ${getEntryName(entry)}`);
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -768,7 +1065,7 @@ async function openFile(entry) {
 
 async function downloadFile(entry) {
   try {
-    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getEntryId(entry))}`, { credentials: "same-origin" });
+    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getContentEntryId(entry))}`, { credentials: "same-origin" });
     if (!response.ok) throw new Error(`Could not download ${getEntryName(entry)}`);
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -786,6 +1083,23 @@ async function downloadFile(entry) {
 
 function navigateToBreadcrumb(index) {
   const crumb = state.breadcrumbs[index];
+
+  if (crumb?.view === VIEWS.SHARED_WITH_ME || isSharedWithMeView()) {
+    if (index === 0) {
+      loadSharedWithMe();
+      return;
+    }
+
+    const breadcrumbs = state.breadcrumbs.slice(0, index + 1);
+    loadSharedFolder(crumb.shareId, crumb.parentId || ROOT_ID, crumb.name, breadcrumbs);
+    return;
+  }
+
+  if (crumb?.view === VIEWS.SHARED_BY_ME || isSharedByMeView()) {
+    loadSharedByMe();
+    return;
+  }
+
   const previousBreadcrumbs = [...state.breadcrumbs];
   state.breadcrumbs = state.breadcrumbs.slice(0, index + 1);
   loadEntries(crumb.id).then((loaded) => {
@@ -814,6 +1128,7 @@ async function createFolder(name) {
 }
 
 async function uploadFiles(fileList) {
+  if (!isMyFilesView()) return;
   const files = [...fileList];
   if (files.length === 0) return;
 
@@ -832,6 +1147,72 @@ async function uploadFiles(fileList) {
     elements.fileUploadInput.value = "";
     elements.emptyFileUploadInput.value = "";
   }
+}
+
+async function loadDirectoryUsers() {
+  const data = await request("/api/users/directory");
+  state.directoryUsers = arrayFromResponse(data);
+  return state.directoryUsers;
+}
+
+function renderDirectoryUsers(users) {
+  if (!Array.isArray(users) || users.length === 0) {
+    elements.shareUserSelect.replaceChildren(new Option("No other users found", ""));
+    elements.shareUserSelect.disabled = true;
+    return;
+  }
+
+  elements.shareUserSelect.replaceChildren(...users.map((user) => {
+    const label = user.displayName ? `${user.displayName} (${user.username})` : user.username;
+    return new Option(label || user.id, user.id);
+  }));
+  elements.shareUserSelect.disabled = false;
+}
+
+function updateShareScopeFields() {
+  const isUserScope = elements.shareScopeUser.checked;
+  elements.shareUserField.classList.toggle("hidden", !isUserScope);
+  elements.shareUserSelect.required = isUserScope;
+}
+
+async function showShareDialog(entry) {
+  state.activeEntry = entry;
+  elements.shareTargetName.textContent = getEntryName(entry);
+  elements.shareScopeUser.checked = true;
+  elements.shareScopeServer.checked = false;
+  elements.shareUserSelect.replaceChildren(new Option("Loading users...", ""));
+  elements.shareUserSelect.disabled = true;
+  updateShareScopeFields();
+  elements.shareDialog.showModal();
+
+  try {
+    renderDirectoryUsers(await loadDirectoryUsers());
+  } catch (error) {
+    elements.shareUserSelect.replaceChildren(new Option(error.message, ""));
+    elements.shareUserSelect.disabled = true;
+  }
+}
+
+async function createShare(entry, scope, targetUserId = null) {
+  const body = scope === "server"
+    ? { scope: "server", permission: "viewer" }
+    : { scope: "user", targetUserId, permission: "viewer" };
+
+  await request(`/user-files/${encodeURIComponent(getEntryId(entry))}/shares`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+  showNotice(scope === "server" ? "Shared with everyone" : "Shared with user");
+}
+
+async function revokeShare(entry) {
+  const shareId = entry.sharedContext?.shareId;
+  const entryId = entry.sharedContext?.entryId || getEntryId(entry);
+  if (!shareId || !entryId) return;
+
+  await request(`/user-files/${encodeURIComponent(entryId)}/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+  showNotice("Share revoked");
+  await loadSharedByMe();
 }
 
 function showRenameDialog(entry) {
@@ -1042,17 +1423,28 @@ function showEntryContextMenu(event, entry) {
   const selectedEntries = getSelectedEntries();
   const singleEntry = selectedEntries.length === 1 ? selectedEntries[0] : null;
   const singleFile = singleEntry?.type === "file" ? singleEntry : null;
+  const canMutateSingle = Boolean(singleEntry && entryCanMutate(singleEntry));
+  const canRevokeSingle = Boolean(singleEntry?.sharedContext?.type === "by-me");
 
-  elements.contextMenu.replaceChildren(
+  const menuItems = [
     contextMenuButton("Open", () => openEntry(singleEntry), { disabled: !singleEntry }),
     contextMenuButton("Download", () => downloadFile(singleFile), { disabled: !singleFile }),
-    contextMenuSeparator(),
-    contextMenuButton("Rename", () => showRenameDialog(singleEntry), { disabled: !singleEntry }),
-    contextMenuButton("Move", () => showMoveDialog(singleEntry), { disabled: !singleEntry }),
-    contextMenuButton("Delete", () => showDeleteDialog(selectedEntries), { danger: true, disabled: selectedEntries.length === 0 }),
-    contextMenuSeparator(),
-    contextMenuButton("Select all", selectAllEntries)
-  );
+    contextMenuSeparator()
+  ];
+
+  if (isMyFilesView()) {
+    menuItems.push(
+      contextMenuButton("Share", () => showShareDialog(singleEntry), { disabled: !canMutateSingle }),
+      contextMenuButton("Rename", () => showRenameDialog(singleEntry), { disabled: !canMutateSingle }),
+      contextMenuButton("Move", () => showMoveDialog(singleEntry), { disabled: !canMutateSingle }),
+      contextMenuButton("Delete", () => showDeleteDialog(selectedEntries), { danger: true, disabled: selectedEntries.length === 0 })
+    );
+  } else if (isSharedByMeView()) {
+    menuItems.push(contextMenuButton("Revoke", () => revokeShare(singleEntry), { danger: true, disabled: !canRevokeSingle }));
+  }
+
+  menuItems.push(contextMenuSeparator(), contextMenuButton("Select all", selectAllEntries));
+  elements.contextMenu.replaceChildren(...menuItems);
   positionContextMenu(event);
 }
 
@@ -1060,13 +1452,20 @@ function showBackgroundContextMenu(event) {
   if (event.target.closest("article") || event.target.closest("button") || event.target.closest("input") || event.target.closest("select")) return;
   event.preventDefault();
 
-  elements.contextMenu.replaceChildren(
-    contextMenuButton("New folder", showCreateFolderDialog),
-    contextMenuButton("Upload", () => elements.fileUploadInput.click()),
-    contextMenuSeparator(),
+  const menuItems = [];
+  if (isMyFilesView()) {
+    menuItems.push(
+      contextMenuButton("New folder", showCreateFolderDialog),
+      contextMenuButton("Upload", () => elements.fileUploadInput.click()),
+      contextMenuSeparator()
+    );
+  }
+
+  menuItems.push(
     contextMenuButton("Select all", selectAllEntries, { disabled: getVisibleEntries().length === 0 }),
-    contextMenuButton("Refresh", () => loadEntries())
+    contextMenuButton("Refresh", () => reloadCurrentView())
   );
+  elements.contextMenu.replaceChildren(...menuItems);
   positionContextMenu(event);
 }
 
@@ -1154,7 +1553,10 @@ setupContextMenu();
 elements.newFolderButton.addEventListener("click", showCreateFolderDialog);
 elements.backButton.addEventListener("click", goBack);
 elements.emptyNewFolderButton.addEventListener("click", showCreateFolderDialog);
-elements.retryButton.addEventListener("click", () => loadEntries());
+elements.myFilesViewButton.addEventListener("click", () => loadEntries(ROOT_ID));
+elements.sharedWithMeViewButton.addEventListener("click", loadSharedWithMe);
+elements.sharedByMeViewButton.addEventListener("click", loadSharedByMe);
+elements.retryButton.addEventListener("click", reloadCurrentView);
 elements.fileUploadInput.addEventListener("change", (event) => uploadFiles(event.target.files));
 elements.emptyFileUploadInput.addEventListener("change", (event) => uploadFiles(event.target.files));
 elements.gridViewButton.addEventListener("click", () => setViewMode("grid"));
@@ -1179,6 +1581,8 @@ elements.previewDialog.addEventListener("close", () => {
   clearPreviewUrl();
   elements.previewBody.replaceChildren();
 });
+elements.shareScopeUser.addEventListener("change", updateShareScopeFields);
+elements.shareScopeServer.addEventListener("change", updateShareScopeFields);
 elements.contentPanel.addEventListener("contextmenu", showBackgroundContextMenu);
 
 elements.contentPanel.addEventListener("dragenter", (event) => {
@@ -1322,6 +1726,26 @@ elements.moveForm.addEventListener("submit", (event) => handleDialogSubmit(event
     setBusy(button, false);
   }
 }, elements.moveSubmit, "Moving"));
+
+elements.shareForm.addEventListener("submit", (event) => handleDialogSubmit(event, async (button, label) => {
+  if (!state.activeEntry) return;
+  const scope = elements.shareScopeServer.checked ? "server" : "user";
+  const targetUserId = elements.shareUserSelect.value;
+  if (scope === "user" && !targetUserId) {
+    showNotice("Choose a user to share with", "error");
+    return;
+  }
+
+  setBusy(button, true, label);
+  try {
+    await createShare(state.activeEntry, scope, targetUserId);
+    elements.shareDialog.close();
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    setBusy(button, false);
+  }
+}, elements.shareSubmit, "Sharing"));
 
 elements.deleteForm.addEventListener("submit", (event) => handleDialogSubmit(event, async (button, label) => {
   if (state.pendingDeleteEntries.length === 0) return;

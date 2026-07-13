@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.0 - 2026-07-13
+
+- Added My Files, Shared with me, and Shared by me views.
+- Added sharing from My Files to another Nebula user or everyone on the server using Nebula core sharing APIs.
+- Added viewer-only shared-with-me browsing, including opening/downloading shared files and navigating shared folders.
+- Added shared-by-me share listing with revoke actions.
+- Added compatibility with Nebula core's `{ share, entry }` sharing response shape.
+- Changed the default browser view to list view.
+- Kept share enforcement delegated to Nebula core; the add-on only renders the sharing UI and calls core APIs.
+
 ## 0.2.0 - 2026-07-13
 
 - Added in-app file previews for common file types, including images, PDFs, media, text, code, JSON, CSV, Markdown, XML, and YAML.
