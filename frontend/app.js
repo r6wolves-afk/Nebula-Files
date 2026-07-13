@@ -86,6 +86,7 @@ const elements = {
   searchInput: document.querySelector("#searchInput"),
   selectionBar: document.querySelector("#selectionBar"),
   selectionSummary: document.querySelector("#selectionSummary"),
+  shareSelectedButton: document.querySelector("#shareSelectedButton"),
   shareDialog: document.querySelector("#shareDialog"),
   shareForm: document.querySelector("#shareForm"),
   sharePermissionInput: document.querySelector("#sharePermissionInput"),
@@ -920,6 +921,7 @@ function renderSelectionBar() {
   const fileCount = selectedCount - folderCount;
   elements.selectionSummary.textContent = `${selectedCount} selected - ${folderCount} folder${folderCount === 1 ? "" : "s"}, ${fileCount} file${fileCount === 1 ? "" : "s"}`;
   elements.openSelectedButton.disabled = selectedCount !== 1;
+  elements.shareSelectedButton.disabled = selectedCount !== 1 || !isMyFilesView();
   elements.renameSelectedButton.disabled = selectedCount !== 1 || !isMyFilesView();
   elements.moveSelectedButton.disabled = selectedCount !== 1 || !isMyFilesView();
   elements.deleteSelectedButton.disabled = selectedCount === 0 || !isMyFilesView();
@@ -1572,6 +1574,7 @@ elements.searchInput.addEventListener("input", (event) => {
   render();
 });
 elements.openSelectedButton.addEventListener("click", () => withSingleSelected(openEntry));
+elements.shareSelectedButton.addEventListener("click", () => withSingleSelected(showShareDialog));
 elements.renameSelectedButton.addEventListener("click", () => withSingleSelected(showRenameDialog));
 elements.moveSelectedButton.addEventListener("click", () => withSingleSelected(showMoveDialog));
 elements.deleteSelectedButton.addEventListener("click", () => showDeleteDialog(getSelectedEntries()));
