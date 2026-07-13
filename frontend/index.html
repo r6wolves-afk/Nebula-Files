@@ -72,7 +72,7 @@
       <section class="content-panel">
         <div class="drop-overlay" id="dropOverlay" aria-hidden="true">
           <div>
-            <strong>Drop files to upload</strong>
+            <strong id="dropOverlayTitle">Drop files to upload</strong>
             <span id="dropTargetLabel">Files</span>
           </div>
         </div>
@@ -168,6 +168,23 @@
           <button class="danger-button" id="deleteSubmit" value="default" type="submit">Delete</button>
         </footer>
       </form>
+    </dialog>
+
+    <dialog class="modal preview-modal" id="previewDialog">
+      <section class="modal-card preview-card" aria-labelledby="previewTitle">
+        <header>
+          <div>
+            <h2 id="previewTitle">Preview</h2>
+            <p id="previewMeta"></p>
+          </div>
+          <button class="ghost-button" id="previewCloseButton" aria-label="Close" type="button">&times;</button>
+        </header>
+        <div class="preview-body" id="previewBody" aria-live="polite"></div>
+        <footer>
+          <button class="secondary-button" id="previewOpenButton" type="button">Open in tab</button>
+          <button class="primary-button" id="previewDownloadButton" type="button">Download</button>
+        </footer>
+      </section>
     </dialog>
 
     <script src="app.js" type="module"></script>

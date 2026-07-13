@@ -14,13 +14,18 @@ const contentTypes = {
 };
 
 let nextId = 6;
+const samplePdf = "%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
+const samplePng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lh8C7wAAAABJRU5ErkJggg==",
+  "base64"
+);
 const entries = [
   folder("folder-1", "Design", null, "2026-07-01T10:00:00Z", "2026-07-10T10:00:00Z"),
   folder("folder-2", "Archive", "folder-1", "2026-07-02T10:00:00Z", "2026-07-03T10:00:00Z"),
   folder("folder-3", "Invoices", null, "2026-07-02T10:00:00Z", "2026-07-11T10:00:00Z"),
-  file("file-1", "Project brief.pdf", "application/pdf", 482901, null, "mock pdf bytes"),
-  file("file-2", "cover.png", "image/png", 120943, null, "mock png bytes"),
-  file("file-3", "palette.json", "application/json", 2048, "folder-1", '{"accent":"teal"}')
+  file("file-1", "Project brief.pdf", "application/pdf", Buffer.byteLength(samplePdf), null, samplePdf),
+  file("file-2", "cover.png", "image/png", samplePng.length, null, samplePng),
+  file("file-3", "palette.json", "application/json", 2048, "folder-1", '{"accent":"teal","surface":"nebula"}')
 ];
 
 function folder(id, name, parentId, createdAt, updatedAt) {
@@ -48,7 +53,7 @@ function readBody(request) {
 
 function parseMultipart(buffer, contentType) {
   const boundary = contentType.match(/boundary=(.+)$/)?.[1];
-  if (!boundary) return { filename: "Upload.bin", parentId: null, mimeType: "application/octet-stream", size: buffer.length };
+  if (!boundary) return { filename: "Upload.bin", parentId: null, mimeType: "application/octet-stream", size: buffer.length, content: buffer };
 
   const body = buffer.toString("binary");
   const parts = body.split(`--${boundary}`);
@@ -56,21 +61,26 @@ function parseMultipart(buffer, contentType) {
   let parentId = null;
   let mimeType = "application/octet-stream";
   let size = buffer.length;
+  let content = Buffer.alloc(0);
 
   for (const part of parts) {
     if (!part.includes("Content-Disposition")) continue;
     const name = part.match(/name="([^"]+)"/)?.[1];
-    const value = part.split("\r\n\r\n")[1]?.replace(/\r\n--$/, "").trim();
+    const valueStart = part.indexOf("\r\n\r\n");
+    if (valueStart === -1) continue;
+    let value = part.slice(valueStart + 4);
+    if (value.endsWith("\r\n")) value = value.slice(0, -2);
 
-    if (name === "parentId") parentId = value || null;
+    if (name === "parentId") parentId = value.trim() || null;
     if (name === "file") {
       filename = part.match(/filename="([^"]+)"/)?.[1] || filename;
       mimeType = part.match(/Content-Type: ([^\r\n]+)/)?.[1] || mimeType;
-      size = Buffer.byteLength(value || "", "binary");
+      content = Buffer.from(value || "", "binary");
+      size = content.length;
     }
   }
 
-  return { filename, parentId, mimeType, size };
+  return { filename, parentId, mimeType, size, content };
 }
 
 function normalizeParentId(parentId) {
@@ -161,7 +171,7 @@ async function handleApi(request, response, url) {
       return true;
     }
 
-    const entry = file(`file-${nextId++}`, upload.filename, upload.mimeType, upload.size, parentId, "uploaded mock bytes");
+    const entry = file(`file-${nextId++}`, upload.filename, upload.mimeType, upload.size, parentId, upload.content);
     entries.push(entry);
     sendJson(response, 201, { entry: stripContent(entry) });
     return true;

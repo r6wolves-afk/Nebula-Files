@@ -14,8 +14,11 @@ const state = {
   sortBy: localStorage.getItem("nebula-files-sort") || "name-asc",
   searchQuery: "",
   selectedIds: new Set(),
+  lastSelectedId: null,
   activeEntry: null,
   pendingDeleteEntries: [],
+  previewObjectUrl: null,
+  draggedEntryIds: [],
   dragDepth: 0
 };
 
@@ -33,7 +36,9 @@ const elements = {
   deleteSelectedButton: document.querySelector("#deleteSelectedButton"),
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   contentPanel: document.querySelector(".content-panel"),
+  contextMenu: document.createElement("div"),
   dropOverlay: document.querySelector("#dropOverlay"),
+  dropOverlayTitle: document.querySelector("#dropOverlayTitle"),
   dropTargetLabel: document.querySelector("#dropTargetLabel"),
   emptyFileUploadInput: document.querySelector("#emptyFileUploadInput"),
   emptyMessage: document.querySelector("#emptyMessage"),
@@ -57,6 +62,13 @@ const elements = {
   newFolderButton: document.querySelector("#newFolderButton"),
   notice: document.querySelector("#notice"),
   openSelectedButton: document.querySelector("#openSelectedButton"),
+  previewBody: document.querySelector("#previewBody"),
+  previewCloseButton: document.querySelector("#previewCloseButton"),
+  previewDialog: document.querySelector("#previewDialog"),
+  previewDownloadButton: document.querySelector("#previewDownloadButton"),
+  previewMeta: document.querySelector("#previewMeta"),
+  previewOpenButton: document.querySelector("#previewOpenButton"),
+  previewTitle: document.querySelector("#previewTitle"),
   renameDialog: document.querySelector("#renameDialog"),
   renameForm: document.querySelector("#renameForm"),
   renameInput: document.querySelector("#renameInput"),
@@ -146,22 +158,76 @@ function typeLabelFor(entry) {
   return extension ? `${extension.toUpperCase()} file` : "File";
 }
 
-function iconLabelFor(entry) {
-  if (entry.type === "folder") return "DIR";
-  const name = getEntryName(entry);
-  const extension = getEntryExtension(entry).slice(0, 4) || (name.includes(".") ? name.split(".").pop().slice(0, 4) : "FILE");
-  return extension || "FILE";
-}
-
 function iconClassFor(entry) {
   if (entry.type === "folder") return "folder";
   const mimeType = entry.mimeType || "";
   const extension = getEntryExtension(entry);
 
+  if (mimeType === "application/pdf" || extension === "pdf") return "pdf";
   if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (["doc", "docx", "rtf", "txt"].includes(extension)) return "document";
+  if (["xls", "xlsx", "csv", "tsv"].includes(extension)) return "spreadsheet";
+  if (["ppt", "pptx"].includes(extension)) return "presentation";
   if (mimeType.includes("zip") || ["zip", "rar", "7z", "tar", "gz"].includes(extension)) return "archive";
   if (["js", "ts", "tsx", "jsx", "html", "css", "json", "md", "py", "rb", "go", "rs"].includes(extension)) return "code";
   return "file";
+}
+
+function iconBadgeFor(entry) {
+  if (entry.type === "folder") return "";
+  const extension = getEntryExtension(entry);
+  if (!extension) return "FILE";
+
+  const normalizedBadges = new Map([
+    ["docx", "DOC"],
+    ["xlsx", "XLS"],
+    ["pptx", "PPT"],
+    ["jpeg", "JPG"],
+    ["markdown", "MD"],
+    ["yaml", "YML"],
+    ["gzip", "GZ"]
+  ]);
+
+  return (normalizedBadges.get(extension) || extension).slice(0, 4).toUpperCase();
+}
+
+function createEntryIcon(entry) {
+  const icon = document.createElement("span");
+  icon.className = `entry-icon ${iconClassFor(entry)}`;
+  icon.setAttribute("aria-hidden", "true");
+
+  const glyph = document.createElement("span");
+  glyph.className = "entry-icon-glyph";
+  icon.append(glyph);
+
+  const badge = iconBadgeFor(entry);
+  if (badge) {
+    const badgeElement = document.createElement("span");
+    badgeElement.className = "entry-icon-badge";
+    badgeElement.textContent = badge;
+    icon.append(badgeElement);
+  }
+
+  return icon;
+}
+
+const textPreviewExtensions = new Set([
+  "txt", "csv", "tsv", "json", "md", "markdown", "js", "ts", "tsx", "jsx", "html", "css", "xml", "yml", "yaml",
+  "py", "rb", "go", "rs", "java", "c", "cpp", "h", "cs", "php", "sh", "sql", "log", "ini", "env"
+]);
+
+function previewKindFor(entry) {
+  const mimeType = (entry.mimeType || "").toLowerCase();
+  const extension = getEntryExtension(entry);
+
+  if (mimeType.startsWith("image/") && extension !== "svg") return "image";
+  if (mimeType === "application/pdf" || extension === "pdf") return "pdf";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("text/") || mimeType.includes("json") || mimeType.includes("xml") || textPreviewExtensions.has(extension)) return "text";
+  return "download";
 }
 
 function showNotice(message, tone = "info") {
@@ -223,6 +289,7 @@ async function loadEntries(parentId = state.currentFolderId) {
     state.allEntries = state.hasAllEntries ? data.allEntries : [];
     state.breadcrumbs = normalizeBreadcrumbs(data);
     state.selectedIds.clear();
+    state.lastSelectedId = null;
     render();
     return true;
   } catch (error) {
@@ -267,6 +334,9 @@ function renderBreadcrumbs() {
     button.textContent = crumb.name;
     if (index === state.breadcrumbs.length - 1) button.classList.add("breadcrumb-current");
     button.addEventListener("click", () => navigateToBreadcrumb(index));
+    button.addEventListener("dragover", (event) => handleFolderDragOver(event, crumb.id, button));
+    button.addEventListener("dragleave", () => button.classList.remove("is-drop-target"));
+    button.addEventListener("drop", (event) => handleFolderDrop(event, crumb.id, button));
     elements.breadcrumbs.append(button);
   });
 }
@@ -371,6 +441,7 @@ function createEntryCard(entry) {
   card.dataset.entryId = entryId;
   card.classList.toggle("selected", state.selectedIds.has(entryId));
   card.tabIndex = 0;
+  card.draggable = true;
 
   const selectLabel = document.createElement("label");
   selectLabel.className = "entry-select";
@@ -383,9 +454,7 @@ function createEntryCard(entry) {
   checkbox.addEventListener("change", () => toggleSelection(entryId, checkbox.checked));
   selectLabel.append(checkbox);
 
-  const icon = document.createElement("span");
-  icon.className = `entry-icon ${iconClassFor(entry)}`;
-  icon.textContent = iconLabelFor(entry);
+  const icon = createEntryIcon(entry);
 
   const main = document.createElement("div");
   main.className = "entry-main";
@@ -420,8 +489,9 @@ function createEntryCard(entry) {
 
   card.addEventListener("click", (event) => {
     if (event.target.closest("button") || event.target.closest("input") || event.target.closest("label")) return;
-    toggleSelection(entryId);
+    selectEntryFromPointer(entryId, event);
   });
+  card.addEventListener("contextmenu", (event) => showEntryContextMenu(event, entry));
   card.addEventListener("dblclick", (event) => {
     if (event.target.closest("button") || event.target.closest("input") || event.target.closest("label")) return;
     openEntry(entry);
@@ -432,6 +502,35 @@ function createEntryCard(entry) {
       toggleSelection(entryId);
     }
   });
+  card.addEventListener("dragstart", (event) => {
+    if (event.target.closest("button") || event.target.closest("input") || event.target.closest("label")) {
+      event.preventDefault();
+      return;
+    }
+
+    if (!state.selectedIds.has(entryId)) {
+      state.selectedIds.clear();
+      state.selectedIds.add(entryId);
+      state.lastSelectedId = entryId;
+      renderSelectionBar();
+      card.classList.add("selected");
+    }
+
+    state.draggedEntryIds = [...state.selectedIds];
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-nebula-entry-id", state.draggedEntryIds.join(","));
+    event.dataTransfer.setData("text/plain", state.draggedEntryIds.length === 1 ? getEntryName(entry) : `${state.draggedEntryIds.length} items`);
+    window.requestAnimationFrame(() => {
+      state.draggedEntryIds.forEach((id) => elements.entries.querySelector(`[data-entry-id="${CSS.escape(id)}"]`)?.classList.add("is-drag-source"));
+    });
+  });
+  card.addEventListener("dragend", clearEntryDragState);
+
+  if (entry.type === "folder") {
+    card.addEventListener("dragover", (event) => handleFolderDragOver(event, entryId, card));
+    card.addEventListener("dragleave", () => card.classList.remove("is-drop-target"));
+    card.addEventListener("drop", (event) => handleFolderDrop(event, entryId, card));
+  }
 
   card.append(selectLabel, icon, main, actions);
   return card;
@@ -456,13 +555,67 @@ function getEntryById(entryId) {
   return state.entries.find((entry) => getEntryId(entry) === entryId);
 }
 
+function getEntryByAnyId(entryId) {
+  return getEntryById(entryId) || state.allEntries.find((entry) => getEntryId(entry) === entryId);
+}
+
 function getSelectedEntries() {
   return [...state.selectedIds].map(getEntryById).filter(Boolean);
+}
+
+function getVisibleEntryIds() {
+  return getVisibleEntries().map(getEntryId);
+}
+
+function selectOnlyEntry(entryId, rerender = true) {
+  state.selectedIds.clear();
+  state.selectedIds.add(entryId);
+  state.lastSelectedId = entryId;
+  if (rerender) {
+    renderEntries();
+    renderSelectionBar();
+  }
+}
+
+function selectRangeTo(entryId, additive = false) {
+  const visibleEntryIds = getVisibleEntryIds();
+  const anchorId = state.lastSelectedId && visibleEntryIds.includes(state.lastSelectedId) ? state.lastSelectedId : entryId;
+  const anchorIndex = visibleEntryIds.indexOf(anchorId);
+  const targetIndex = visibleEntryIds.indexOf(entryId);
+  if (anchorIndex === -1 || targetIndex === -1) return;
+
+  if (!additive) state.selectedIds.clear();
+  const [startIndex, endIndex] = [anchorIndex, targetIndex].sort((left, right) => left - right);
+  visibleEntryIds.slice(startIndex, endIndex + 1).forEach((id) => state.selectedIds.add(id));
+  renderEntries();
+  renderSelectionBar();
+}
+
+function selectEntryFromPointer(entryId, event) {
+  if (event.shiftKey) {
+    selectRangeTo(entryId, event.ctrlKey || event.metaKey);
+    return;
+  }
+
+  if (event.ctrlKey || event.metaKey) {
+    toggleSelection(entryId);
+    return;
+  }
+
+  selectOnlyEntry(entryId);
+}
+
+function selectAllEntries() {
+  getVisibleEntryIds().forEach((entryId) => state.selectedIds.add(entryId));
+  state.lastSelectedId = getVisibleEntryIds().at(-1) || state.lastSelectedId;
+  renderEntries();
+  renderSelectionBar();
 }
 
 function toggleSelection(entryId, selected = !state.selectedIds.has(entryId)) {
   if (selected) {
     state.selectedIds.add(entryId);
+    state.lastSelectedId = entryId;
   } else {
     state.selectedIds.delete(entryId);
   }
@@ -472,6 +625,7 @@ function toggleSelection(entryId, selected = !state.selectedIds.has(entryId)) {
 
 function clearSelection() {
   state.selectedIds.clear();
+  state.lastSelectedId = null;
   renderEntries();
   renderSelectionBar();
 }
@@ -511,7 +665,92 @@ async function openEntry(entry) {
     return;
   }
 
-  await openFile(entry);
+  await previewFile(entry);
+}
+
+function clearPreviewUrl() {
+  if (!state.previewObjectUrl) return;
+  URL.revokeObjectURL(state.previewObjectUrl);
+  state.previewObjectUrl = null;
+}
+
+function renderPreviewMessage(message, tone = "info") {
+  const messageElement = document.createElement("p");
+  messageElement.className = `preview-message ${tone}`;
+  messageElement.textContent = message;
+  elements.previewBody.replaceChildren(messageElement);
+}
+
+async function previewFile(entry) {
+  state.activeEntry = entry;
+  clearPreviewUrl();
+  elements.previewTitle.textContent = getEntryName(entry);
+  elements.previewMeta.textContent = `${typeLabelFor(entry)} - ${formatSize(entry.size)} - Modified ${formatDate(entry.updatedAt || entry.createdAt)}`;
+  elements.previewOpenButton.onclick = () => openFile(entry);
+  elements.previewDownloadButton.onclick = () => downloadFile(entry);
+  renderPreviewMessage("Loading preview");
+  elements.previewDialog.showModal();
+
+  try {
+    const response = await fetch(`${API_BASE}/user-files/${encodeURIComponent(getEntryId(entry))}`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error(`Could not preview ${getEntryName(entry)}`);
+    await renderFilePreview(entry, await response.blob());
+  } catch (error) {
+    renderPreviewMessage(error.message, "error");
+  }
+}
+
+async function renderFilePreview(entry, blob) {
+  const kind = previewKindFor(entry);
+
+  if (kind === "text") {
+    const maxPreviewBytes = 1_200_000;
+    if ((entry.size || blob.size) > maxPreviewBytes) {
+      renderPreviewMessage("This text file is too large to preview inline.");
+      return;
+    }
+
+    let text = await blob.text();
+    if ((entry.mimeType || "").includes("json") || getEntryExtension(entry) === "json") {
+      try {
+        text = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        // Keep the original text when it is not valid JSON.
+      }
+    }
+
+    const pre = document.createElement("pre");
+    pre.className = "preview-text";
+    pre.textContent = text || "(empty file)";
+    elements.previewBody.replaceChildren(pre);
+    return;
+  }
+
+  if (kind === "download") {
+    renderPreviewMessage("No inline preview is available for this file type.");
+    return;
+  }
+
+  state.previewObjectUrl = URL.createObjectURL(blob);
+  let previewElement;
+
+  if (kind === "image") {
+    previewElement = document.createElement("img");
+    previewElement.alt = getEntryName(entry);
+  } else if (kind === "pdf") {
+    previewElement = document.createElement("iframe");
+    previewElement.title = getEntryName(entry);
+  } else if (kind === "video") {
+    previewElement = document.createElement("video");
+    previewElement.controls = true;
+  } else if (kind === "audio") {
+    previewElement = document.createElement("audio");
+    previewElement.controls = true;
+  }
+
+  previewElement.className = `preview-media ${kind}`;
+  previewElement.src = state.previewObjectUrl;
+  elements.previewBody.replaceChildren(previewElement);
 }
 
 async function openFile(entry) {
@@ -687,11 +926,19 @@ function getDescendantFolderIds(folderId, allEntries) {
 }
 
 async function moveEntry(entry, parentId) {
-  await request(`/user-files/${encodeURIComponent(getEntryId(entry))}`, {
+  await moveEntries([entry], parentId);
+}
+
+async function moveEntries(entriesToMove, parentId) {
+  const entries = entriesToMove.filter(Boolean);
+  if (entries.length === 0) return;
+
+  await Promise.all(entries.map((entry) => request(`/user-files/${encodeURIComponent(getEntryId(entry))}`, {
     method: "PATCH",
     body: JSON.stringify({ name: getEntryName(entry), parentId: parentId || null })
-  });
-  showNotice("Moved");
+  })));
+  showNotice(entries.length === 1 ? "Moved" : `${entries.length} items moved`);
+  clearSelection();
   await loadEntries();
 }
 
@@ -743,6 +990,167 @@ function handleDialogSubmit(event, handler, busyButton, busyLabel) {
   handler(busyButton, busyLabel);
 }
 
+function setupContextMenu() {
+  elements.contextMenu.className = "context-menu hidden";
+  elements.contextMenu.setAttribute("role", "menu");
+  document.body.append(elements.contextMenu);
+}
+
+function hideContextMenu() {
+  elements.contextMenu.classList.add("hidden");
+  elements.contextMenu.replaceChildren();
+}
+
+function contextMenuButton(label, handler, options = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.role = "menuitem";
+  button.textContent = label;
+  button.disabled = Boolean(options.disabled);
+  if (options.danger) button.classList.add("danger");
+  button.addEventListener("click", () => {
+    if (button.disabled) return;
+    hideContextMenu();
+    handler();
+  });
+  return button;
+}
+
+function contextMenuSeparator() {
+  const separator = document.createElement("span");
+  separator.className = "context-menu-separator";
+  return separator;
+}
+
+function positionContextMenu(event) {
+  elements.contextMenu.classList.remove("hidden");
+  const { innerWidth, innerHeight } = window;
+  const rect = elements.contextMenu.getBoundingClientRect();
+  const left = Math.min(event.clientX, innerWidth - rect.width - 8);
+  const top = Math.min(event.clientY, innerHeight - rect.height - 8);
+  elements.contextMenu.style.left = `${Math.max(8, left)}px`;
+  elements.contextMenu.style.top = `${Math.max(8, top)}px`;
+}
+
+function showEntryContextMenu(event, entry) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  const entryId = getEntryId(entry);
+  if (!state.selectedIds.has(entryId)) selectOnlyEntry(entryId);
+
+  const selectedEntries = getSelectedEntries();
+  const singleEntry = selectedEntries.length === 1 ? selectedEntries[0] : null;
+  const singleFile = singleEntry?.type === "file" ? singleEntry : null;
+
+  elements.contextMenu.replaceChildren(
+    contextMenuButton("Open", () => openEntry(singleEntry), { disabled: !singleEntry }),
+    contextMenuButton("Download", () => downloadFile(singleFile), { disabled: !singleFile }),
+    contextMenuSeparator(),
+    contextMenuButton("Rename", () => showRenameDialog(singleEntry), { disabled: !singleEntry }),
+    contextMenuButton("Move", () => showMoveDialog(singleEntry), { disabled: !singleEntry }),
+    contextMenuButton("Delete", () => showDeleteDialog(selectedEntries), { danger: true, disabled: selectedEntries.length === 0 }),
+    contextMenuSeparator(),
+    contextMenuButton("Select all", selectAllEntries)
+  );
+  positionContextMenu(event);
+}
+
+function showBackgroundContextMenu(event) {
+  if (event.target.closest("article") || event.target.closest("button") || event.target.closest("input") || event.target.closest("select")) return;
+  event.preventDefault();
+
+  elements.contextMenu.replaceChildren(
+    contextMenuButton("New folder", showCreateFolderDialog),
+    contextMenuButton("Upload", () => elements.fileUploadInput.click()),
+    contextMenuSeparator(),
+    contextMenuButton("Select all", selectAllEntries, { disabled: getVisibleEntries().length === 0 }),
+    contextMenuButton("Refresh", () => loadEntries())
+  );
+  positionContextMenu(event);
+}
+
+function hasExternalFiles(dataTransfer) {
+  return Array.from(dataTransfer?.types || []).includes("Files");
+}
+
+function hasInternalEntry(dataTransfer) {
+  return state.draggedEntryIds.length > 0 || Array.from(dataTransfer?.types || []).includes("application/x-nebula-entry-id");
+}
+
+function getDraggedEntries() {
+  return state.draggedEntryIds.map(getEntryByAnyId).filter(Boolean);
+}
+
+function canMoveEntryTo(entry, parentId) {
+  if (!entry) return false;
+  const nextParentId = normalizeParentId(parentId);
+  if (normalizeParentId(entry.parentId) === nextParentId) return false;
+
+  if (entry.type === "folder") {
+    const entryId = getEntryId(entry);
+    if (nextParentId === entryId) return false;
+    if (getDescendantFolderIds(entryId, state.allEntries).includes(nextParentId)) return false;
+  }
+
+  return true;
+}
+
+function canMoveEntriesTo(entries, parentId) {
+  return entries.length > 0 && entries.every((entry) => canMoveEntryTo(entry, parentId));
+}
+
+function clearDropTargets() {
+  document.querySelectorAll(".is-drop-target").forEach((target) => target.classList.remove("is-drop-target"));
+  elements.contentPanel.classList.remove("is-moving");
+}
+
+function clearEntryDragState() {
+  state.draggedEntryIds = [];
+  clearDropTargets();
+  document.querySelectorAll(".is-drag-source").forEach((target) => target.classList.remove("is-drag-source"));
+}
+
+function handleFolderDragOver(event, parentId, targetElement) {
+  if (!hasInternalEntry(event.dataTransfer)) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const entries = getDraggedEntries();
+  if (!canMoveEntriesTo(entries, parentId)) {
+    event.dataTransfer.dropEffect = "none";
+    targetElement.classList.remove("is-drop-target");
+    return;
+  }
+
+  event.dataTransfer.dropEffect = "move";
+  targetElement.classList.add("is-drop-target");
+}
+
+async function handleFolderDrop(event, parentId, targetElement) {
+  if (!hasInternalEntry(event.dataTransfer)) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const entries = getDraggedEntries();
+  if (!canMoveEntriesTo(entries, parentId)) {
+    targetElement.classList.remove("is-drop-target");
+    clearEntryDragState();
+    return;
+  }
+
+  targetElement.classList.remove("is-drop-target");
+
+  try {
+    await moveEntries(entries, parentId);
+  } catch (error) {
+    showNotice(error.message, "error");
+  } finally {
+    clearEntryDragState();
+  }
+}
+
+setupContextMenu();
 elements.newFolderButton.addEventListener("click", showCreateFolderDialog);
 elements.backButton.addEventListener("click", goBack);
 elements.emptyNewFolderButton.addEventListener("click", showCreateFolderDialog);
@@ -766,24 +1174,72 @@ elements.renameSelectedButton.addEventListener("click", () => withSingleSelected
 elements.moveSelectedButton.addEventListener("click", () => withSingleSelected(showMoveDialog));
 elements.deleteSelectedButton.addEventListener("click", () => showDeleteDialog(getSelectedEntries()));
 elements.clearSelectionButton.addEventListener("click", clearSelection);
+elements.previewCloseButton.addEventListener("click", () => elements.previewDialog.close());
+elements.previewDialog.addEventListener("close", () => {
+  clearPreviewUrl();
+  elements.previewBody.replaceChildren();
+});
+elements.contentPanel.addEventListener("contextmenu", showBackgroundContextMenu);
 
 elements.contentPanel.addEventListener("dragenter", (event) => {
-  if (!event.dataTransfer?.types.includes("Files")) return;
+  if (hasInternalEntry(event.dataTransfer)) {
+    elements.contentPanel.classList.add("is-moving");
+    return;
+  }
+
+  if (!hasExternalFiles(event.dataTransfer)) return;
   event.preventDefault();
   state.dragDepth += 1;
+  elements.dropOverlayTitle.textContent = "Drop files to upload";
   elements.contentPanel.classList.add("is-dragging");
 });
 elements.contentPanel.addEventListener("dragover", (event) => {
-  if (!event.dataTransfer?.types.includes("Files")) return;
+  if (hasInternalEntry(event.dataTransfer)) {
+    event.preventDefault();
+    const entries = getDraggedEntries();
+    if (!canMoveEntriesTo(entries, state.currentFolderId)) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+
+    event.dataTransfer.dropEffect = "move";
+    elements.contentPanel.classList.add("is-moving");
+    return;
+  }
+
+  if (!hasExternalFiles(event.dataTransfer)) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
 });
 elements.contentPanel.addEventListener("dragleave", (event) => {
-  if (!event.dataTransfer?.types.includes("Files")) return;
+  if (hasInternalEntry(event.dataTransfer)) {
+    if (!elements.contentPanel.contains(event.relatedTarget)) elements.contentPanel.classList.remove("is-moving");
+    return;
+  }
+
+  if (!hasExternalFiles(event.dataTransfer)) return;
   state.dragDepth = Math.max(0, state.dragDepth - 1);
   if (state.dragDepth === 0) elements.contentPanel.classList.remove("is-dragging");
 });
-elements.contentPanel.addEventListener("drop", (event) => {
+elements.contentPanel.addEventListener("drop", async (event) => {
+  if (hasInternalEntry(event.dataTransfer)) {
+    event.preventDefault();
+    const entries = getDraggedEntries();
+    if (!canMoveEntriesTo(entries, state.currentFolderId)) {
+      clearEntryDragState();
+      return;
+    }
+
+    try {
+      await moveEntries(entries, state.currentFolderId);
+    } catch (error) {
+      showNotice(error.message, "error");
+    } finally {
+      clearEntryDragState();
+    }
+    return;
+  }
+
   if (!event.dataTransfer?.files.length) return;
   event.preventDefault();
   state.dragDepth = 0;
@@ -791,10 +1247,27 @@ elements.contentPanel.addEventListener("drop", (event) => {
   uploadFiles(event.dataTransfer.files);
 });
 
+document.addEventListener("drop", () => {
+  if (state.draggedEntryIds.length > 0) clearEntryDragState();
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".context-menu")) hideContextMenu();
+});
+document.addEventListener("scroll", hideContextMenu, true);
+window.addEventListener("resize", hideContextMenu);
+
 document.addEventListener("keydown", (event) => {
   if (document.querySelector("dialog[open]") || event.target.matches("input, select, textarea")) return;
 
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    selectAllEntries();
+    return;
+  }
+
   if (event.key === "Escape" && state.selectedIds.size > 0) {
+    hideContextMenu();
     clearSelection();
   }
 
