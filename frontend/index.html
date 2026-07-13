@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nebula Files</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar" aria-label="File manager controls">
+        <div class="identity">
+          <span class="product-mark" aria-hidden="true">NF</span>
+          <div>
+            <h1>Nebula Files</h1>
+            <p id="folderSummary">Your files</p>
+          </div>
+        </div>
+
+        <div class="toolbar-actions">
+          <div class="view-toggle" role="group" aria-label="View mode">
+            <button class="icon-button active" id="gridViewButton" type="button" aria-label="Grid view" title="Grid view">
+              <span class="icon grid-icon" aria-hidden="true"></span>
+            </button>
+            <button class="icon-button" id="listViewButton" type="button" aria-label="List view" title="List view">
+              <span class="icon list-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+          <button class="secondary-button" id="newFolderButton" type="button">New folder</button>
+          <label class="primary-button" for="fileUploadInput">Upload</label>
+          <input id="fileUploadInput" type="file" multiple hidden />
+        </div>
+      </section>
+
+      <section class="pathbar" aria-label="Folder navigation">
+        <button class="icon-button" id="backButton" type="button" aria-label="Back" title="Back" disabled>&larr;</button>
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="Folder breadcrumbs"></nav>
+      </section>
+
+      <section class="explorer-controls" aria-label="Explorer tools">
+        <label class="search-field">
+          <span>Search</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Search this folder" />
+        </label>
+        <label class="sort-field">
+          <span>Sort</span>
+          <select id="sortSelect">
+            <option value="name-asc">Name A-Z</option>
+            <option value="name-desc">Name Z-A</option>
+            <option value="updated-desc">Modified newest</option>
+            <option value="updated-asc">Modified oldest</option>
+            <option value="size-desc">Size largest</option>
+            <option value="size-asc">Size smallest</option>
+            <option value="type-asc">Type</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="selection-bar hidden" id="selectionBar" aria-live="polite">
+        <p id="selectionSummary">No items selected</p>
+        <div class="selection-actions">
+          <button class="secondary-button" id="openSelectedButton" type="button">Open</button>
+          <button class="secondary-button" id="renameSelectedButton" type="button">Rename</button>
+          <button class="secondary-button" id="moveSelectedButton" type="button">Move</button>
+          <button class="danger-button" id="deleteSelectedButton" type="button">Delete</button>
+          <button class="ghost-text-button" id="clearSelectionButton" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section class="notice hidden" id="notice" role="status"></section>
+
+      <section class="content-panel">
+        <div class="drop-overlay" id="dropOverlay" aria-hidden="true">
+          <div>
+            <strong>Drop files to upload</strong>
+            <span id="dropTargetLabel">Files</span>
+          </div>
+        </div>
+
+        <div class="state loading-state" id="loadingState">
+          <div class="loader" aria-hidden="true"></div>
+          <p>Loading files</p>
+        </div>
+
+        <div class="state empty-state hidden" id="emptyState">
+          <div class="empty-illustration" aria-hidden="true">
+            <span></span>
+          </div>
+          <h2 id="emptyTitle">This folder is empty</h2>
+          <p id="emptyMessage">Create a folder or upload files to get started.</p>
+          <div class="empty-actions">
+            <button class="secondary-button" id="emptyNewFolderButton" type="button">New folder</button>
+            <label class="primary-button" for="emptyFileUploadInput">Upload files</label>
+            <input id="emptyFileUploadInput" type="file" multiple hidden />
+          </div>
+        </div>
+
+        <div class="state error-state hidden" id="errorState">
+          <h2>Could not load this folder</h2>
+          <p id="errorMessage">Something went wrong.</p>
+          <button class="secondary-button" id="retryButton" type="button">Retry</button>
+        </div>
+
+        <div class="entries grid-view" id="entries" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <dialog class="modal" id="createFolderDialog">
+      <form method="dialog" class="modal-card" id="createFolderForm">
+        <header>
+          <h2>New folder</h2>
+          <button class="ghost-button" value="cancel" aria-label="Close" type="submit">&times;</button>
+        </header>
+        <label>
+          <span>Folder name</span>
+          <input id="folderNameInput" name="folderName" type="text" autocomplete="off" required maxlength="120" />
+        </label>
+        <footer>
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="createFolderSubmit" value="default" type="submit">Create</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="renameDialog">
+      <form method="dialog" class="modal-card" id="renameForm">
+        <header>
+          <h2>Rename</h2>
+          <button class="ghost-button" value="cancel" aria-label="Close" type="submit">&times;</button>
+        </header>
+        <label>
+          <span>New name</span>
+          <input id="renameInput" name="rename" type="text" autocomplete="off" required maxlength="180" />
+        </label>
+        <footer>
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="renameSubmit" value="default" type="submit">Save</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="moveDialog">
+      <form method="dialog" class="modal-card" id="moveForm">
+        <header>
+          <h2>Move</h2>
+          <button class="ghost-button" value="cancel" aria-label="Close" type="submit">&times;</button>
+        </header>
+        <label>
+          <span>Destination</span>
+          <select id="moveDestination" name="destination"></select>
+        </label>
+        <footer>
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="primary-button" id="moveSubmit" value="default" type="submit">Move</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="deleteDialog">
+      <form method="dialog" class="modal-card danger-card" id="deleteForm">
+        <header>
+          <h2 id="deleteTitle">Delete item</h2>
+          <button class="ghost-button" value="cancel" aria-label="Close" type="submit">&times;</button>
+        </header>
+        <p id="deleteMessage"></p>
+        <footer>
+          <button class="secondary-button" value="cancel" type="submit">Cancel</button>
+          <button class="danger-button" id="deleteSubmit" value="default" type="submit">Delete</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>

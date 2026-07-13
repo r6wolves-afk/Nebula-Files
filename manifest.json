@@ -1,0 +1,13 @@
+{
+  "id": "files",
+  "name": "Nebula Files",
+  "version": "0.1.0",
+  "type": "ui",
+  "summary": "A per-user file explorer for Nebula.",
+  "description": "Browse folders, upload files, rename, move, delete, and download files stored through Nebula core.",
+  "icon": "folder-open",
+  "color": "#d65ce8",
+  "route": "/apps/files",
+  "entry": "frontend/index.html",
+  "permissions": ["files.read", "files.write"]
+}
