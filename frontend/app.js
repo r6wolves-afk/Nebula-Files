@@ -1351,7 +1351,7 @@ function showDeleteDialog(entriesToDelete) {
 async function deleteEntries(entriesToDelete) {
   const entries = entriesToDelete.filter(Boolean);
   for (const entry of entries) {
-    await request(`/user-files/${encodeURIComponent(getEntryId(entry))}`, { method: "DELETE" });
+    await request(`/user-files/${encodeURIComponent(getContentEntryId(entry))}`, { method: "DELETE" });
   }
   clearSelection();
   showNotice(entries.length === 1 ? `${entries[0].type === "folder" ? "Folder" : "File"} deleted` : `${entries.length} items deleted`);
@@ -1584,6 +1584,9 @@ elements.previewDialog.addEventListener("close", () => {
   clearPreviewUrl();
   elements.previewBody.replaceChildren();
 });
+elements.deleteDialog.addEventListener("close", () => {
+  state.pendingDeleteEntries = [];
+});
 elements.shareScopeUser.addEventListener("change", updateShareScopeFields);
 elements.shareScopeServer.addEventListener("change", updateShareScopeFields);
 elements.contentPanel.addEventListener("contextmenu", showBackgroundContextMenu);
@@ -1759,7 +1762,6 @@ elements.deleteForm.addEventListener("submit", (event) => handleDialogSubmit(eve
   } catch (error) {
     showNotice(error.message, "error");
   } finally {
-    state.pendingDeleteEntries = [];
     setBusy(button, false);
   }
 }, elements.deleteSubmit, "Deleting"));

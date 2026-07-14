@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.2 - 2026-07-14
+
+- Fixed delete actions to target the underlying file or folder ID when entries include UI-only row IDs.
+- Improved the delete confirmation dialog contrast and danger styling.
+
 ## 2.5.1 - 2026-07-13
 
 - Added Share to the selected-item action bar so folders can be shared from the same Explorer-style workflow as files.

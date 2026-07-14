@@ -890,8 +890,15 @@ label.primary-button.disabled {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(25, 14, 45, 0.98);
+  color: var(--ink);
   padding: 20px;
   box-shadow: var(--shadow);
+}
+
+.modal-card h2 {
+  color: var(--ink);
+  font-size: 1.35rem;
+  line-height: 1.15;
 }
 
 .modal-card header,
@@ -925,7 +932,24 @@ label.primary-button.disabled {
 }
 
 .danger-card {
-  border-color: rgba(194, 72, 90, 0.24);
+  gap: 16px;
+  border-color: rgba(255, 95, 134, 0.42);
+  background:
+    linear-gradient(145deg, rgba(52, 16, 38, 0.96), rgba(25, 14, 45, 0.98)),
+    rgba(25, 14, 45, 0.98);
+}
+
+.danger-card p {
+  border: 1px solid rgba(255, 95, 134, 0.24);
+  border-radius: var(--radius);
+  background: rgba(255, 95, 134, 0.1);
+  color: #ffdce4;
+  padding: 12px;
+  line-height: 1.45;
+}
+
+.danger-card footer {
+  padding-top: 2px;
 }
 
 .modal-card header p {
