@@ -385,10 +385,13 @@ function setBusy(button, isBusy, label) {
 
 async function request(path, options = {}) {
   const url = path.startsWith("/api/") ? path : `${API_BASE}${path}`;
+  const { headers: optionHeaders, ...fetchOptions } = options;
+  const hasJsonBody = fetchOptions.body != null && !(fetchOptions.body instanceof FormData);
+  const headers = hasJsonBody ? { "Content-Type": "application/json", ...optionHeaders } : optionHeaders;
   const response = await fetch(url, {
     credentials: "same-origin",
-    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options
+    ...fetchOptions,
+    ...(headers ? { headers } : {})
   });
 
   if (!response.ok) {

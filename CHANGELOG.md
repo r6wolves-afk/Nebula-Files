@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.3 - 2026-07-14
+
+- Stopped sending JSON content headers on bodyless requests so Nebula core accepts delete and revoke calls.
+
 ## 2.5.2 - 2026-07-14
 
 - Fixed delete actions to target the underlying file or folder ID when entries include UI-only row IDs.
